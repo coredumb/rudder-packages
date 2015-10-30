@@ -66,6 +66,7 @@ Group: Applications/System
 
 Source1: ncf_api_flask_app.wsgi
 Source2: ncf-api-virtualenv.conf
+Source3: ncf-api-virtualenv.te
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildArch: noarch
@@ -91,6 +92,20 @@ Requires: httpd mod_wsgi shadow-utils
 Requires: apache2 apache2-mod_wsgi pwdutils
 %endif
 
+## 1 - RHEL
+%if 0%{?rhel} && 0%{?rhel} == 6
+BuildRequires: selinux-policy
+%endif
+
+%if 0%{?rhel} && 0%{?rhel} >= 7
+BuildRequires: selinux-policy-devel
+%endif
+
+## 2 - Fedora
+%if 0%{?fedora}
+BuildRequires: selinux-policy-devel
+%endif
+
 %description
 ncf is a CFEngine framework aimed at helping newcomers on CFEngine
 to be more quickly operationnal and old timers to spend less time
@@ -103,6 +118,9 @@ of the ncf API easier.
 # Source preparation
 #=================================================
 %prep
+
+# Copy the required source files to the build directory
+cp -f %{SOURCE3} %{_builddir}
 
 #=================================================
 # Building
@@ -140,6 +158,11 @@ else
   echo "WARNING: is defined"
 fi
 
+%if 0%{?rhel} || 0%{?fedora}
+# Build SELinux policy package
+cd %{_builddir} && make -f /usr/share/selinux/devel/Makefile
+%endif
+
 #=================================================
 # Installation
 #=================================================
@@ -150,7 +173,9 @@ rm -rf %{buildroot}
 # Directories
 
 mkdir -p %{buildroot}%{installdir}/
+mkdir -p %{buildroot}%{installdir}/share/selinux/
 mkdir -p %{buildroot}%{apache_vhost_dir}/
+mkdir -p %{buildroot}/var/lib/%{user_name}/
 
 # Files
 
@@ -158,6 +183,11 @@ cp -r %{_sourcedir}/%{real_name}/* %{buildroot}%{installdir}/
 
 install -m 644 %{SOURCE1} %{buildroot}%{installdir}/
 install -m 644 %{SOURCE2} %{buildroot}%{apache_vhost_dir}/
+
+%if 0%{?rhel} || 0%{?fedora}
+# Install SELinux policy
+install -m 644  %{_builddir}/ncf-api-virtualenv.pp %{buildroot}%{installdir}/share/selinux/
+%endif
 
 %post -n ncf-api-virtualenv
 #=================================================
@@ -167,9 +197,21 @@ install -m 644 %{SOURCE2} %{buildroot}%{apache_vhost_dir}/
 # Create the package user
 if ! getent passwd %{user_name} >/dev/null; then
   echo -n "INFO: Creating the %{user_name} user..."
-  useradd -r -m -d /var/lib/%{user_name} -c "ncf API,,," %{user_name} >/dev/null 2>&1
+  useradd -r -d /var/lib/%{user_name} -c "ncf API,,," %{user_name} >/dev/null 2>&1
+  chown %{user_name}:%{user_name} /var/lib/%{user_name}/
   echo " Done"
 fi
+
+%if 0%{?rhel} || 0%{?fedora}
+# SELinux support
+# Check "sestatus" presence, and if here tweak our installation to be
+# SELinux compliant
+if type sestatus >/dev/null 2>&1
+then
+  # Add/Update the ncf-api-virtualenv SELinux policy
+  semodule -i %{installdir}/share/selinux/ncf-api-virtualenv.pp 2>/dev/null
+fi
+%endif
 
 %if 0%{?rhel} || 0%{?fedora}
 # EL-based systems enable the WSGI module for apache
@@ -199,6 +241,20 @@ if [ $1 -eq 0 ]; then
     echo " Done"
   fi
 fi
+
+%if 0%{?rhel} || 0%{?fedora}
+  # Do it only during uninstallation
+  if [ $1 -eq 0 ]; then
+    if type sestatus >/dev/null 2>&1
+    then
+      if [ $(semodule -l | grep -c ncf-api-virtualenv) -eq 0 ]
+      then
+        # Remove the ncf-api-virtualenv SELinux policy
+        semodule -r ncf-api-virtualenv 2>/dev/null
+      fi
+    fi
+  fi
+%endif
 
 #=================================================
 # Cleaning

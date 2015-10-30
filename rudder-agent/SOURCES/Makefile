@@ -20,7 +20,7 @@
 
 # Versions to use
 RUDDER_VERSION_TO_PACKAGE = <put Rudder version or version-snapshot here>
-CFENGINE_RELEASE = 3.6.5
+CFENGINE_RELEASE = 3.7.1
 FUSION_RELEASE = 2.3.6
 LMDB_RELEASE = 0.9.11
 OPENSSL_RELEASE = 1.0.1i
@@ -111,7 +111,6 @@ ifneq (true,$(NO_INIT))
 	mkdir -p $(DESTDIR)/etc/init.d
 	mkdir -p $(DESTDIR)/etc/default
 	$(INSTALL) -m 755 rudder-agent.init $(DESTDIR)/etc/init.d/rudder-agent
-	$(INSTALL) -m 644 rudder-agent.default $(DESTDIR)/etc/default/rudder-agent
 	$(INSTALL) -m 755 rudder.init $(DESTDIR)/etc/init.d/rudder
 endif
 
@@ -135,6 +134,8 @@ endif
 	mkdir -p $(DESTDIR)/etc/ld.so.conf.d
 	$(INSTALL) -m 644 rudder.conf $(DESTDIR)/etc/ld.so.conf.d/
 
+	mkdir -p $(DESTDIR)/opt/rudder/share/package-scripts
+	$(INSTALL) -m 755 rudder-agent-postinst $(DESTDIR)/opt/rudder/share/package-scripts/
 	$(INSTALL) -m 755 check-rudder-agent $(DESTDIR)/opt/rudder/bin/
 	$(INSTALL) -m 755 vzps.py $(DESTDIR)/opt/rudder/bin/
 	$(INSTALL) -m 755 rudder-perl $(DESTDIR)/opt/rudder/bin/
@@ -160,24 +161,20 @@ endif
 # clean 
 clean: localclean
 localclean:
-	rm -rf DESTDIR
-	rm -rf initial-promises
-	rm -rf rudder-agent-utilities
-	rm -rf fusioninventory-agent
-	rm -rf rudder-sources
-	rm -rf inputs
-	rm -f rudder-agent.cron
+	rm -rf $(DESTDIR)
 	rm -rf build-ssl build-lmdb build-cfengine build-perl
-	[ -d cfengine-source ] && cd cfengine-source && $(MAKE_COMMAND) clean 2>/dev/null || true
-	[ -d lmdb-source ] && cd lmdb-source && $(MAKE_COMMAND) clean 2>/dev/null || true
-	[ -d openssl-source ] && cd openssl-source && $(MAKE_COMMAND) clean 2>/dev/null || true
-	[ -d perl-$(PERL_VERSION) ] && cd perl-$(PERL_VERSION) && $(MAKE_COMMAND) distclean 2>/dev/null || true
-
+	[ -d cfengine-source ] && cd cfengine-source && $(MAKE) clean 2>/dev/null || true
+	[ -d lmdb-source ] && cd lmdb-source && $(MAKE) clean 2>/dev/null || true
+	[ -d openssl-source ] && cd openssl-source && $(MAKE) clean 2>/dev/null || true
+	[ -d perl-$(PERL_VERSION) ] && cd perl-$(PERL_VERSION) && $(MAKE) distclean 2>/dev/null || true
 
 # standard name is mrproper
 mrproper: veryclean
 veryclean:
+	rm -f rudder-agent.cron
 	rm -f ./rudder-sources.tar.bz2
+	rm -rf rudder-sources
+	rm -rf initial-promises rudder-agent-utilities fusioninventory-agent
 	rm -rf cfengine-source lmdb-source openssl-source perl-$(PERL_VERSION)
 
 ##########################################
@@ -186,7 +183,7 @@ veryclean:
 
 cfengine-source:
 ifeq ($(shell ../../build-caching get --force-config ./cfengine-source/ name=cfengine-src version=$(CFENGINE_RELEASE) >/dev/null 2>&1 || echo KO), KO)
-	# Original URL: https://s3.amazonaws.com/cfengine.package-repos/tarballs/cfengine-$(CFENGINE_RELEASE).tar.gz
+	# Original URL: https://cfengine-package-repos.s3.amazonaws.com/tarballs/cfengine-3.7.1.tar.gz
 	$(GET) $(TMP_DIR)/cfengine.tgz http://www.normation.com/tarball/cfengine/cfengine-$(CFENGINE_RELEASE).tar.gz
 	gunzip < $(TMP_DIR)/cfengine.tgz | $(TAR) xf -
 	mv ./cfengine-$(CFENGINE_RELEASE) ./cfengine-source
@@ -195,9 +192,6 @@ endif
 
 	# Apply patches
 	for PATCHNAME in patches/cfengine/*.patch; do echo "Applying $$PATCHNAME..."; $(PATCH) -d ./cfengine-source -p1 < $$PATCHNAME; echo ""; done
-
-	# Bootstrap the package using autogen before compilation
-	cd cfengine-source && NO_CONFIGURE=1 ./autogen.sh
 
 openssl-source:
 ifeq ($(shell ../../build-caching get --force-config ./openssl-source/ name=openssl-src version=$(OPENSSL_RELEASE) >/dev/null 2>&1 || echo KO), KO)
@@ -222,7 +216,7 @@ rudder-sources.tar.bz2:
 
 rudder-sources: rudder-sources.tar.bz2
 	bunzip2 < rudder-sources.tar.bz2 | $(TAR) xf -
-	mv rudder-sources-$(RUDDER_VERSION_TO_PACKAGE)/ rudder-sources/
+	mv rudder-sources-$(RUDDER_VERSION_TO_PACKAGE)*/ rudder-sources/ # the '*' is needed for nightly release
 	touch rudder-sources # to make it younger than the bzip source file
 
 initial-promises: ./rudder-sources
@@ -241,15 +235,10 @@ ifeq ($(shell ../../build-caching get --force-config ./fusioninventory-agent/ na
 	mv ./FusionInventory-Agent-$(FUSION_RELEASE) ./fusioninventory-agent
 	../../build-caching put --force-config ./fusioninventory-agent/ name=fusioninventory-agent version=$(FUSION_RELEASE)
 endif
-	$(PATCH) -d ./fusioninventory-agent -p1 < ./patches/fusioninventory/0001-4096-char-line-truncation.patch
-	$(PATCH) -d ./fusioninventory-agent -p1 < ./patches/fusioninventory/0002-install-d-mkdir-p.patch
-	$(PATCH) -d ./fusioninventory-agent -p1 < ./patches/fusioninventory/0003-unix-ps-etime-usage.patch
-	$(PATCH) -d ./fusioninventory-agent -p1 < ./patches/fusioninventory/0004-aix-microcode-version-retrieval.patch
-	$(PATCH) -d ./fusioninventory-agent -p1 < ./patches/fusioninventory/0005-aix-duplicated-network-interfaces.patch
-	$(PATCH) -d ./fusioninventory-agent -p1 < ./patches/fusioninventory/0006-fixes-oracle-linux-os-name.patch
-	$(PATCH) -d ./fusioninventory-agent -p1 < ./patches/fusioninventory/0007-correct-storage-size-detection.patch
-	$(PATCH) -d ./fusioninventory-agent -p1 < ./patches/fusioninventory/0008-detect-docker-containers.patch
-	$(PATCH) -d ./fusioninventory-agent -p1 < ./patches/fusioninventory/0009-correct-path-of-rudder-policy-server-uuid.patch
+
+	# Apply patches
+	for PATCHNAME in patches/fusioninventory/*.patch; do echo "Applying $$PATCHNAME... on FusionInventory"; $(PATCH) -d ./fusioninventory-agent -p1 < $$PATCHNAME; done
+
 	# Fix a lsusb invocation that crashes some SLES machines
 	$(FIND) ./fusioninventory-agent -name "USB.pm" -exec rm "{}" \;
 
@@ -290,31 +279,31 @@ rudder-agent.cron: rudder-sources
 # TODO generalize install in build-* to allow caching
 build-ssl: openssl-source
 	cd openssl-source && $(SSL_CONFIGURE) -fPIC --prefix=$(RUDDER_DIR) --openssldir=$(RUDDER_DIR)/openssl shared
-	cd openssl-source && $(MAKE_COMMAND)
+	cd openssl-source && $(MAKE)
 	slibclean >/dev/null 2>&1 || true
-	cd openssl-source && $(MAKE_COMMAND) install INSTALL_PREFIX=$(CURDIR)/build-ssl
+	cd openssl-source && $(MAKE) install INSTALL_PREFIX=$(CURDIR)/build-ssl
 
 build-lmdb: lmdb-source
-	cd lmdb-source/libraries/liblmdb && $(MAKE_COMMAND)
+	cd lmdb-source/libraries/liblmdb && $(MAKE)
 	# need a temporary install for cfengine
 	mkdir -p build-lmdb/opt/rudder
 	# LMDB's Makefile does not know how to create destination files, do it ourselves
 	cd build-lmdb/opt/rudder && mkdir -p bin lib include man/man1
-	cd lmdb-source/libraries/liblmdb && $(MAKE_COMMAND) install prefix=$(RUDDER_DIR) DESTDIR=$(CURDIR)/build-lmdb
+	cd lmdb-source/libraries/liblmdb && $(MAKE) install prefix=$(RUDDER_DIR) DESTDIR=$(CURDIR)/build-lmdb
 
 build-cfengine: $(BUILD_DEPS) cfengine-source
 	# If there is no configure, bootstrap with autogen.sh first
 	cd cfengine-source && [ -x ./configure ] || NO_CONFIGURE=1 ./autogen.sh
 	# remove temporary rpath added by configure to build options
 	cd cfengine-source && sed 's/[A-Z]*_LDFLAGS="$[A-Z]*_LDFLAGS -R$with_[a-z]*\/lib"/true/' configure > configure.new && mv configure.new configure && chmod +x configure
-	cd cfengine-source && LDFLAGS="-R/opt/rudder/lib" ./configure --prefix=$(RUDDER_DIR) --with-workdir=/var/rudder/cfengine-community --enable-static=yes --enable-shared=no $(LMDB_ARG) $(OPENSSL_ARG)
-	cd cfengine-source && $(MAKE_COMMAND)
+	cd cfengine-source && LDFLAGS="-Wl,-R/opt/rudder/lib" ./configure --prefix=$(RUDDER_DIR) --with-workdir=/var/rudder/cfengine-community --enable-static=yes --enable-shared=no --without-postgresql $(LMDB_ARG) $(OPENSSL_ARG)
+	cd cfengine-source && $(MAKE)
 	touch $@
 
 build-perl: perl-$(PERL_VERSION)
-	cd perl-$(PERL_VERSION) && $(MAKE_COMMAND) distclean 2>/dev/null || true # Or this can fail on an already used source
+	cd perl-$(PERL_VERSION) && $(MAKE) distclean 2>/dev/null || true # Or this can fail on an already used source
 	cd perl-$(PERL_VERSION) && ./Configure -Dnoextensions=ODBM_File -Duserelocatableinc -Dusethreads -des -Dcc="gcc" -Dinstallprefix=$(RUDDER_DIR) -Dsiteprefix=$(RUDDER_DIR) -Dprefix=$(RUDDER_DIR)
-	cd perl-$(PERL_VERSION) && $(MAKE_COMMAND)
+	cd perl-$(PERL_VERSION) && $(MAKE)
 	touch $@
 
 #####################################
@@ -331,14 +320,14 @@ install-lmdb: build-lmdb
 	$(CP_A) $(CURDIR)/build-lmdb/* $(DESTDIR)
 
 install-cfengine: build-cfengine $(INSTALL_DEPS)
-	cd cfengine-source && $(MAKE_COMMAND) install DESTDIR=$(DESTDIR) STRIP=""
+	cd cfengine-source && $(MAKE) install DESTDIR=$(DESTDIR) STRIP=""
 	mkdir -p $(INSTALL_DIR)/share/man/man8
 	cd cfengine-source && for binary in cf-agent cf-promises cf-key cf-execd cf-serverd cf-monitord cf-runagent; do \
 		LD_LIBRARY_PATH="$(INSTALL_DIR)/lib" $${binary}/$${binary} -M | gzip > $(INSTALL_DIR)/share/man/man8/$${binary}.8.gz; \
 	done
 
 install-perl: build-perl
-	cd perl-$(PERL_VERSION) && $(MAKE_COMMAND) install DESTDIR=$(DESTDIR)
+	cd perl-$(PERL_VERSION) && $(MAKE) install DESTDIR=$(DESTDIR)
 	touch build-perl # because perl-$(PERL_VERSION) is touched by make install
 
 CPANM:=$(CURDIR)/perl-$(PERL_VERSION)/App-cpanminus/bin/cpanm $(GET_OPT)
@@ -390,9 +379,9 @@ install-fusion: $(FUSION_DEPS) fusioninventory-agent
 #	# Original URL: http://www.cpan.org/modules/by-module/HTML/HTML-Parser-3.71.tar.gz
 #	$(MODULE_INSTALL) http://www.normation.com/tarball/cpan/HTML-Parser-3.71.tar.gz
 #	$(MODULE_TEST) -MHTML::Parser
-#	# Original URL: http://www.cpan.org/modules/by-module/LWP/libwww-perl-6.13.tar.gz
-#	$(MODULE_INSTALL) http://www.normation.com/tarball/cpan/libwww-perl-6.13.tar.gz
-#	$(MODULE_TEST) -MLWP
+	# Original URL: http://www.cpan.org/modules/by-module/LWP/libwww-perl-6.13.tar.gz
+	$(MODULE_INSTALL) http://www.normation.com/tarball/cpan/libwww-perl-6.13.tar.gz
+	$(MODULE_TEST) -MLWP
 #	# Original URL: http://www.cpan.org/modules/by-module/Compress/Compress-Raw-Bzip2-2.068.tar.gz
 #	$(MODULE_INSTALL) http://www.normation.com/tarball/cpan/Compress-Raw-Bzip2-2.068.tar.gz
 #	$(MODULE_TEST) -MCompress::Raw::Bzip2
@@ -445,7 +434,11 @@ ifeq ($(INSTALL),ginstall)
 	mv fusioninventory-agent/Makefile.PL.new fusioninventory-agent/Makefile.PL
 endif
 	cd fusioninventory-agent && PERL_MM_USE_DEFAULT=1 $(INSTALL_DIR)/bin/perl Makefile.PL --default PREFIX=$(RUDDER_DIR)
-	cd fusioninventory-agent && $(MAKE_COMMAND) install DESTDIR=$(DESTDIR)
+	cd fusioninventory-agent && $(MAKE) install DESTDIR=$(DESTDIR)
+	# bug in fusion installer that doesn't set the right owner to some files
+	chown root $(DESTDIR)/opt/rudder/share/fusioninventory
+	chown root $(DESTDIR)/opt/rudder/share/fusioninventory/html
+	chown root $(DESTDIR)/opt/rudder/etc/fusioninventory
 	cp -r fusioninventory-agent/lib/FusionInventory $(INSTALL_DIR)/lib/perl5/
 
 
