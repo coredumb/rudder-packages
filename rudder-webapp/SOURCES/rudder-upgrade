@@ -58,6 +58,8 @@ trap anomaly_handler ERR INT TERM
 # - 3.0.2        : Check for the PostgreSQL version (>= 8.4)
 # - 3.1.0        : Add LDAP entry for 'rudder_syslog_protocol' property, and set 'tcp' as value, different from default value (udp) on a fresh 3.1
 # - 3.2.0        : Add the properties to configuration authentication provider and master admin account
+# - 3.2.0        : Add the properties to configure Rudder roles
+# - 3.2.0        : Call rudderify to make sure local techniques are copied in each agent promises
 #####################################################################################
 
 # Some paths
@@ -224,6 +226,10 @@ update_rudder_repository_from_system_directory() {
   fi
 }
 
+# Helper function to compare version numbers with 2 components
+ver() { printf "1%03d%03d" `echo "$1" | tr '.' ' '`; }
+
+
 ################################################################################
 # Update credentials
 ################################################################################
@@ -323,15 +329,36 @@ upgrade_ncf() {
   # Make sure that ncf uses the right logger bundles (_logger_default and logger_rudder)
   STEP="Make sure that ncf uses the right logger bundles (_logger_default and logger_rudder)"
 
-  if ! grep -Eq "^loggers=.*logger_rudder.*" ${RUDDER_NCF_SOURCE_DIRECTORY}/tree/ncf.conf; then
-    sed -i "s%^loggers=\(.*\)%loggers=\1,logger_rudder%" ${RUDDER_NCF_SOURCE_DIRECTORY}/tree/ncf.conf
+  # Rename _logger_default to _log_default
+  if grep -Eq "^loggers=.*_logger_default.*" ${RUDDER_VAR}/ncf/common/ncf.conf; then
+    sed -i "s%^loggers=\(.*\)_logger_default\(.*\)$%loggers=\1_log_default\2%" ${RUDDER_VAR}/ncf/common/ncf.conf
+  fi
+
+  # Rename logger_rudder to log_rudder
+  if grep -Eq "^loggers=.*logger_rudder.*" ${RUDDER_VAR}/ncf/common/ncf.conf; then
+    sed -i "s%^loggers=\(.*\)logger_rudder\(.*\)$%loggers=\1log_rudder\2%" ${RUDDER_VAR}/ncf/common/ncf.conf
+  fi
+
+  # Add log_rudder if it's not present
+  if ! grep -Eq "^loggers=.*log_rudder.*" ${RUDDER_VAR}/ncf/common/ncf.conf; then
+    sed -i "s%^loggers=\(.*\)%loggers=\1,log_rudder%" ${RUDDER_VAR}/ncf/common/ncf.conf
   fi
 
   # Make sure that ncf uses the right CFEngine port (5309)
   STEP="Make sure that ncf uses the right CFEngine port (5309)"
 
-  if ! grep -Eq "^cfengine_port=5309" ${RUDDER_NCF_SOURCE_DIRECTORY}/tree/ncf.conf; then
-    sed -i "s%^cfengine_port=.*%cfengine_port=5309%" ${RUDDER_NCF_SOURCE_DIRECTORY}/tree/ncf.conf
+  if ! grep -Eq "^cfengine_port=5309" ${RUDDER_VAR}/ncf/common/ncf.conf; then
+    sed -i "s%^cfengine_port=.*%cfengine_port=5309%" ${RUDDER_VAR}/ncf/common/ncf.conf
+  fi
+}
+
+# Call rudderify on all local ncf techniques to make sure the promises will be properly generated
+rudderify_techniques() {
+  STEP="Call rudderify on all local ncf techniques (#7443)"
+  if [ -d ${CONFIGURATION_REPOSITORY}/techniques ]; then
+    /usr/share/ncf/tools/ncf_rudder.py rudderify_techniques ${CONFIGURATION_REPOSITORY}/techniques/ncf_techniques
+    cd ${CONFIGURATION_REPOSITORY}/ && git add -A techniques/ncf_techniques && git commit --allow-empty -q -m "Re-Rudderify ncf Techniques - automatically done by rudder-upgrade script"
+    trigger_technique_library_reload
   fi
 }
 
@@ -414,7 +441,7 @@ rudder.jdbc.maxPoolSize=25"
   fi
   # comment the line for rudder.auth.ldap.enable if not already commented
   sed -i 's%^\(rudder\.auth\.ldap\.enable.*\)%#\1%' /opt/rudder/etc/rudder-web.properties
-  check_and_add_config_property rudder.auth.type "
+  check_and_add_config_property rudder.auth.provider "
 
 ###########################
 # Rudder Authentication    #############################################################
@@ -451,6 +478,31 @@ rudder.jdbc.maxPoolSize=25"
 rudder.auth.provider=${AUTH_PROVIDER}
   
 "
+
+  # - 3.2.0 : Add properties to define the role of servers
+  STEP="Add properties to define the new roles of servers"
+
+  check_and_add_config_property rudder.server-roles.relay-promises-only "
+#
+# Rudder roles definition
+#
+# Allow to define which hosts have the roles relay-promises-only, cfengine-mission-portal when
+# using a split architecture of Rudder
+# The file containing the roles will be generated in:
+# /var/rudder/configuration-repository/inputs/rudder-server-roles.conf
+#
+# The allowed values, for each parameter are
+# - autodetect (default): the roles are automatically detected based on inventories (based on the presence of files in /opt/rudder/etc/server-roles.d/)
+# - anything else (hostname, ip, or list of hostname or ip, seperated by commas): the
+#   content that will be used inside the role file
+# The hosts with the relay promises role
+rudder.server-roles.relay-promises-only=autodetect
+
+# The hosts with the cfengine mission portal role
+rudder.server-roles.cfengine-mission-portal=autodetect
+
+"
+
 }
 
 ################################################################################
@@ -521,18 +573,18 @@ upgrade_database() {
 
   # If installing on SLES11 and PostgreSQL 8.3 was used
   if [ -e /var/lib/pgsql/data/PG_VERSION ]; then
-    CLUSTER_VERSION=$(cat /var/lib/pgsql/data/PG_VERSION)
-    if ${RUDDER_OPT}/bin/rpmvercmp ${CLUSTER_VERSION} lt 8.4; then
+    CLUSTER_VERSION=$(cat /var/lib/pgsql/data/PG_VERSION | cut -d . -f 1-2)
+    if [ `ver ${CLUSTER_VERSION}` -lt `ver 8.4` ]; then
       echo "ERROR: Your running PostgreSQL cluster, in version ${CLUSTER_VERSION}, is too old for Rudder 3.0+"
       echo "ERROR: Please manually migrate your data to the newer PostgreSQL version installed with Rudder."
     fi
   fi
 
   RES=$(psql -V|head -1|cut -d " " -f 3|cut -d . -f 1-2)
-  if ${RUDDER_OPT}/bin/rpmvercmp ${RES} lt 8.4; then
+  if [ `ver ${RES}` -lt `ver 8.4` ]; then
     echo "ERROR: Your PostgreSQL version, ${RES}, is too old and will fail to work properly with Rudder 3.0+."
     echo "ERROR: Please upgrade to at least 8.4."
-  elif ${RUDDER_OPT}/bin/rpmvercmp ${RES} lt 9.1; then
+  elif [ `ver ${RES}` -lt `ver 9.1` ]; then
     echo "WARNING: Your PostgreSQL version, ${RES}, is getting old and will not offer optimal performance with Rudder 3.0+."
     echo "WARNING: Please upgrade to at least 9.1."
   fi
@@ -641,29 +693,54 @@ update_credentials
 set_git_branch
 upgrade_system_techniques
 upgrade_ncf
+rudderify_techniques
 upgrade_logback_xml
 upgrade_rudder_web_properties
 
 # Check the daemon status before upgrading
+RUDDER_DB_INITIALIZED=true
 echo -n "INFO: Checking PostgreSQL service status..."
-if retry_wrapper "${PSQL} -t -d rudder -c 'select count(ruleid) from rules' >/dev/null 2>&1" "PostgreSQL";
-then
-  echo " OK"
-  upgrade_database
-else
-  UNCOMPLETE_MIGRATION=true
+
+# If the server should be on this machine, make sure rudder-reports is available - if not the DB will simply not be initialised yet
+if [ "${SQL_SERVER}" = "localhost" ] && [ ! -f ${RUDDER_OPT}/etc/server-roles.d/rudder-reports ]; then
+  # Server is localhost but rudder-reports is not installed - this is probably a half-installed server, warn and give up
+  RUDDER_DB_INITIALIZED=false
+  echo " Not installed"
+  echo "INFO: No local database found. During initial install, this is expected."
+fi
+
+if ${RUDDER_DB_INITIALIZED}; then
+  if retry_wrapper "${PSQL} -t -d rudder -c 'select count(ruleid) from rules' >/dev/null 2>&1" "PostgreSQL";
+  then
+    echo " OK"
+    upgrade_database
+  else
+    UNCOMPLETE_MIGRATION=true
+  fi
 fi
 
 # Check the daemon status before upgrading
-# Using retry_wrapper is necessary because during an upgrade, slapd may be restarted, so we need to wait
-# for it to be available again
+RUDDER_LDAP_INITIALIZED=true
 echo -n "INFO: Checking LDAP service status..."
-if retry_wrapper "${LDAPSEARCH} -b '' -s base + >/dev/null 2>&1" "LDAP";
-then
-  echo " OK"
-  upgrade_inventory
-else
-  UNCOMPLETE_MIGRATION=true
+
+# If the server should be on this machine, make sure rudder-inventory-ldap is available - if not LDAP will simply not be initialised yet
+if [ "${LDAP_SERVER}" = "localhost" ] && [ ! -f ${RUDDER_OPT}/etc/server-roles.d/rudder-inventory-ldap ]; then
+  # Server is localhost but rudder-inventory-ldap is not installed - this is probably a half-installed server, warn and give up
+  RUDDER_LDAP_INITIALIZED=false
+  echo " Not installed"
+  echo "INFO: No local LDAP server found. During initial install, this is expected."
+fi
+
+if ${RUDDER_LDAP_INITIALIZED}; then
+  # Using retry_wrapper is necessary because during an upgrade, slapd may be restarted, so we need to wait
+  # for it to be available again
+  if retry_wrapper "${LDAPSEARCH} -b '' -s base + >/dev/null 2>&1" "LDAP";
+  then
+    echo " OK"
+    upgrade_inventory
+  else
+    UNCOMPLETE_MIGRATION=true
+  fi
 fi
 
 ################################################################################
@@ -678,7 +755,7 @@ if ${UNCOMPLETE_MIGRATION}
 then
   echo "ERROR: The migration has failed in some steps. Check previous error messages."
   echo "Please restart the failed service(s), and start the migration script again."
-  echo "(on a single Rudder server, try service rudder-server-root restart)"
+  echo "(on a single Rudder server, try service rudder restart)"
   echo "Once it is working, run:"
   echo "# /opt/rudder/bin/rudder-upgrade"
 else

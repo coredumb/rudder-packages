@@ -77,7 +77,7 @@ Name: %{real_name}
 Version: %{real_version}
 Release: 1%{?dist}
 Epoch: 0
-License: AGPLv3
+License: GPLv3
 URL: http://www.rudder-project.org
 
 Group: Applications/System
@@ -103,6 +103,7 @@ Source19: rudder-reload-cf-serverd
 Source20: rudder-webapp.te
 Source21: rudder-webapp.fc
 Source22: rudder-keys
+Source23: .gitignore
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildArch: noarch
@@ -177,11 +178,11 @@ cd %{_builddir} && make -f /usr/share/selinux/devel/Makefile
 
 # Build rudder-web war
 export MAVEN_OPTS=-Xmx512m
-cd %{_builddir}/rudder-sources/rudder-parent-pom && %{_sourcedir}/maven/bin/mvn --quiet -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
-cd %{_builddir}/rudder-sources/rudder-commons    && %{_sourcedir}/maven/bin/mvn --quiet -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
-cd %{_builddir}/rudder-sources/scala-ldap        && %{_sourcedir}/maven/bin/mvn --quiet -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
-cd %{_builddir}/rudder-sources/ldap-inventory    && %{_sourcedir}/maven/bin/mvn --quiet -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
-cd %{_builddir}/rudder-sources/rudder            && %{_sourcedir}/maven/bin/mvn --quiet -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install package
+cd %{_builddir}/rudder-sources/rudder-parent-pom && %{_sourcedir}/maven/bin/mvn --batch-mode -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
+cd %{_builddir}/rudder-sources/rudder-commons    && %{_sourcedir}/maven/bin/mvn --batch-mode -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
+cd %{_builddir}/rudder-sources/scala-ldap        && %{_sourcedir}/maven/bin/mvn --batch-mode -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
+cd %{_builddir}/rudder-sources/ldap-inventory    && %{_sourcedir}/maven/bin/mvn --batch-mode -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
+cd %{_builddir}/rudder-sources/rudder            && %{_sourcedir}/maven/bin/mvn --batch-mode -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install package
 
 #=================================================
 # Installation
@@ -293,6 +294,9 @@ install -m 644  %{_builddir}/rudder-webapp.pp %{buildroot}%{rudderdir}/share/sel
 
 # Install rudder keys
 install -m 755 %{SOURCE22} %{buildroot}%{rudderdir}/bin/
+
+# Install gitignore file for our git repo
+install -m 644 %{SOURCE23} %{buildroot}%{ruddervardir}/configuration-repository/
 
 %pre -n rudder-webapp
 #=================================================
@@ -412,11 +416,9 @@ fi
 # SELinux support
 # Check "sestatus" presence, and if here tweak our installation to be
 # SELinux compliant
-if type sestatus >/dev/null 2>&1
-then
+if type sestatus >/dev/null 2>&1 && sestatus | grep -q "enabled"; then
   # Add/Update the rudder-webapp SELinux policy
   semodule -i /opt/rudder/share/selinux/rudder-webapp.pp
-	
   # Ensure inventory directories context is set by resetting
   # their context to the contexts defined in SELinux configuration,
   # including the file contexts defined in the rudder-webapp module
@@ -445,6 +447,12 @@ if [ ! -d /var/rudder/configuration-repository/techniques ]; then
 	cp -a %{rudderdir}/share/techniques /var/rudder/configuration-repository/
 fi
 
+# Apply selinux context on configuration repository so technique editor (via apache/httpd) can write in this directory
+if type sestatus >/dev/null 2>&1 && sestatus | grep -q "enabled"; then
+  semanage fcontext -a -t httpd_sys_rw_content_t '/var/rudder/configuration-repository/techniques(/.*)?'
+  restorecon -RF /var/rudder/configuration-repository/techniques
+fi
+
 # Go into configuration-repository to manage git
 cd /var/rudder/configuration-repository
 
@@ -458,8 +466,7 @@ if [ ! -d /var/rudder/configuration-repository/.git ]; then
   git config user.email "root@localhost"
 
   git add .
-  git commit -m "initial commit"
-
+  git commit -q -m "initial commit"
 else
 
   # This should have been set during repository initialization, but might need to be
@@ -518,11 +525,11 @@ fi
 %if 0%{?rhel} || 0%{?fedora}
   # Do it only during uninstallation
   if [ $1 -eq 0 ]; then
-    if type sestatus >/dev/null 2>&1
-    then
-      if [ $(semodule -l | grep -c rudder-webapp) -eq 0 ]
-      then
+    if type sestatus >/dev/null 2>&1 && sestatus | grep -q "enabled"; then
+      if semodule -l | grep -q rudder-webapp; then
         # Remove the rudder-webapp SELinux policy
+        semanage fcontext -d '/var/rudder/configuration-repository/techniques(/.*)?'
+        restorecon -RF /var/rudder/configuration-repository/techniques
         semodule -r rudder-webapp
       fi
     fi
@@ -563,6 +570,7 @@ rm -rf %{buildroot}
 %{ruddervardir}/inventories/incoming
 %{ruddervardir}/inventories/received
 %{ruddervardir}/inventories/failed
+%{ruddervardir}/configuration-repository/.gitignore
 %{ruddervardir}/configuration-repository/ncf/ncf-hooks.d
 %{rudderlogdir}/apache2/
 /etc/%{apache_vhost_dir}/

@@ -41,7 +41,7 @@ Name: %{real_name}
 Version: %{real_version}
 Release: 1%{?dist}
 Epoch: 0
-License: AGPLv3
+License: GPLv3
 URL: http://www.rudder-project.org
 
 Group: Applications/System
@@ -127,15 +127,20 @@ then
   service ${POSTGRESQL_SERVICE_NAME} start
 fi
 
-# HACK: Give rights for login without unix account
-RUDDER_PG_DEFINED=`grep "rudder" /var/lib/pgsql/data/pg_hba.conf | wc -l`
-if [ ${RUDDER_PG_DEFINED} -le 0 ]; then
-  sed -i 1i"host    all             rudder             ::1/128              md5" /var/lib/pgsql/data/pg_hba.conf
-  sed -i 1i"host    all             rudder          127.0.0.1/32            md5" /var/lib/pgsql/data/pg_hba.conf
+PG_HBA_FILE=$(su - postgres -c "psql -t -P format=unaligned -c 'show hba_file';")
 
-  # Apply changes in PostgreSQL
-  service ${POSTGRESQL_SERVICE_NAME} reload
+#HACK: Give rights for login without unix account
+if [ -f ${PG_HBA_FILE} ]; then
+  RUDDER_PG_DEFINED=`grep "rudder" ${PG_HBA_FILE} | wc -l`
+  if [ ${RUDDER_PG_DEFINED} -le 0 ]; then
+    sed -i 1i"host    all             rudder             ::1/128              md5" ${PG_HBA_FILE}
+    sed -i 1i"host    all             rudder          127.0.0.1/32            md5" ${PG_HBA_FILE}
+
+    # Apply changes in PostgreSQL
+    service ${POSTGRESQL_SERVICE_NAME} reload
+  fi
 fi
+
 
 %post -n rudder-reports
 #=================================================

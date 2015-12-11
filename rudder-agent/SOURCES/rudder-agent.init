@@ -63,8 +63,8 @@ CFENGINE_COMMUNITY_NAME_2="cf-monitord"
 # Script specific
 PROG_NAME=`basename $0 | sed 's/^[KS][0-9][0-9]//'` # For nice messages
 OS=`uname -s`   # To adapt message printing
-MYUID=`id | cut -d\( -f2 | cut -d\) -f1`     # For UNIX compatibility => modify this command
-MYGID=`id | cut -d\( -f3 | cut -d\) -f1`     # For UNIX compatibility => modify this command
+MYUID=`id | cut -d\( -f2 | cut -d\) -f1`
+MYGID=`id | cut -d\( -f3 | cut -d\) -f1`
 SYSLOG_FACILITY="local6"
 # Detect the correct ps tool to use
 ns=$(ps --no-header -o utsns --pid $$ 2>/dev/null || true)
@@ -75,14 +75,14 @@ if [ -d "/proc/bc" ] && [ -e "/proc/bc/0" ]; then # we have openvz
     PS_COMMAND="/opt/rudder/bin/vzps.py -E 0"
   fi
 elif [ -n "${ns}" ]; then # we have namespaces
-  PS_COMMAND="eval ps --no-header -e -O utsns | grep -E '^[[:space:]]*[[:digit:]]*[[:space:]]+${ns}'"
+  # the sed is here to prepend a fake user field that is removed by the -o option (it is never used)
+  PS_COMMAND="eval ps --no-header -e -O utsns | grep -E '^[[:space:]]*[[:digit:]]*[[:space:]]+${ns}' | sed 's/^/user /'"
 else # standard unix
   PS_COMMAND="ps -ef"
 fi
 
 
 # CFEngine Community directory and files
-CFENGINE_COMMUNITY_PATH="/opt/rudder"
 CFENGINE_COMMUNITY_VAR_PATH="/var/rudder/cfengine-community"
 CFENGINE_COMMUNITY_RUN_0="1"
 CFENGINE_COMMUNITY_RUN_1="1"
@@ -159,7 +159,7 @@ fi
 message "info" "[INFO] Using $CFENGINE_COMMUNITY_VAR_PATH for CFEngine workdir"
 
 # Are you root?
-if [ $MYUID -ne 0 ]
+if [ "${MYUID}" != "root" ]
 then
   message "alert" "[ALERT] only root can launch CFEngine Community"
   exit 1
@@ -179,6 +179,17 @@ start_daemons() {
 
   # It's time to start the daemons
   for daemon in ${DAEMONS}; do
+    # Test if daemon is already running
+    if [ -s ${CFENGINE_COMMUNITY_PID_FILE[$daemon]} ]
+    then
+      PID=`cat ${CFENGINE_COMMUNITY_PID_FILE[$daemon]}`
+      if [ -e /proc/$PID ]
+      then
+        message "info" "[INFO] CFEngine Community ${CFENGINE_COMMUNITY_NAME[$daemon]} Is already running"
+        continue
+      fi
+    fi
+
     # Start message
     eval message "info" "\"[INFO] Launching CFEngine Community \${CFENGINE_COMMUNITY_NAME_$daemon}...\""
 
@@ -195,7 +206,7 @@ start_daemons() {
       if [ $i -eq $TIMEOUT -o $i -eq `expr $TIMEOUT / 2` ]
       then
         eval message "alert" "\"[ALERT] no PID file for \${CFENGINE_COMMUNITY_NAME_$daemon} after $i seconds. Trying again...\""
-        eval "\${CFENGINE_COMMUNITY_BIN_\$daemon}" "\${CFENGINE_COMMUNITY_PARAMS_$daemon}"
+        eval "\${CFENGINE_COMMUNITY_BIN_$daemon}" "\${CFENGINE_COMMUNITY_PARAMS_$daemon}"
       fi
 
       if [ $i -eq `expr $TIMEOUT + 10` ]
@@ -289,11 +300,10 @@ forcestop_daemons() {
     # If the pid file is not readable or is empty, kill all process by name
     if eval [ ! -r "\${CFENGINE_COMMUNITY_PID_FILE_$daemon}" ] || eval [ ! -s "\${CFENGINE_COMMUNITY_PID_FILE_$daemon}" ]
     then
-      # Try a killall
-      if [ -x /bin/pidof ]
-      then
-        /bin/kill -KILL `eval /bin/pidof "\\\${CFENGINE_COMMUNITY_BIN_$daemon}"`
+      if type pidof > /dev/null 2> /dev/null; then
+        kill -KILL `eval pidof "\\\${CFENGINE_COMMUNITY_BIN_$daemon}"`
       else
+        # Try a killall
         eval /usr/bin/killall -KILL "\${CFENGINE_COMMUNITY_BIN_$daemon}"
       fi
 

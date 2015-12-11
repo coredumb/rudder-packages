@@ -390,6 +390,10 @@ start_slapd() {
       MEMSIZE=$(sed -n '/^MemTotal/s/[^0-9]//gp' /proc/meminfo)
       # Round down using integer division (800 bytes is the size of an entry)
       CACHESIZE=$((${MEMSIZE} * 1024 / 800 / 10 / 10000 * 10000))
+      # Maximum cache size of 40M entries. Above about 40G of RAM (about 53.6M entries) OpenLDAP dumps core, so we force an upper limit.
+      if [ ${CACHESIZE} -gt 40000000 ]; then
+        CACHESIZE=40000000
+      fi
     else
       # set cache size to the value provided
       CACHESIZE=${RUDDER_CACHESIZE}
@@ -584,11 +588,11 @@ forcestop() {
     then
       message "info" "[INFO] Found no rudder-slapd process running with $SLAPD_SERVICES"
     else
-      # Try a killall
-      if [ -x /bin/pidof ]
+      if type pidof > /dev/null 2> /dev/null
       then
-        /bin/kill -KILL `/bin/pidof ${SLAPD_BIN}`
+        kill -KILL `pidof ${SLAPD_BIN}`
       else
+        # Try a killall
         /usr/bin/killall -KILL ${SLAPD_BIN}
       fi
 
@@ -624,11 +628,11 @@ forcestop() {
     then
       message "info" "[INFO] Found no slurpd process running"
     else
-      # Try a killall
-      if [ -x /bin/pidof ]
+      if type pidof > /dev/null 2> /dev/null
       then
-        /bin/kill -KILL `/bin/pidof ${SLURPD_BIN}`
+        kill -KILL `pidof ${SLURPD_BIN}`
       else
+        # Try a killall
         /usr/bin/killall -KILL ${SLURPD_BIN}
       fi
 

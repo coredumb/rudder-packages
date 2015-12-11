@@ -157,9 +157,12 @@ install -m 644 %{SOURCE4} %{buildroot}/opt/rudder/etc/server-roles.d/
 #=================================================
 
 # Prepare the migration of /etc/default/rudder-jetty
-if [ $(grep -c '# WARNING #' /opt/rudder/etc/rudder-jetty.conf) -eq 0 ]
+if [ -e /opt/rudder/etc/rudder-jetty.conf ]
 then
-    cp /opt/rudder/etc/rudder-jetty.conf /opt/rudder/etc/rudder-jetty.conf.migrate
+    if [ $(grep -c '# WARNING #' /opt/rudder/etc/rudder-jetty.conf) -eq 0 ]
+    then
+        cp /opt/rudder/etc/rudder-jetty.conf /opt/rudder/etc/rudder-jetty.conf.migrate
+    fi
 fi
 
 if [ -x /opt/jetty7 ]
@@ -219,6 +222,17 @@ then
 	chkconfig rudder-jetty off
 	%endif
 fi
+
+%preun -n rudder-jetty
+#=================================================
+# Pre Un-installation
+#=================================================
+
+if [[ $1 -eq 0 ]]
+then
+  service rudder-jetty stop
+fi
+
 
 #=================================================
 # Cleaning

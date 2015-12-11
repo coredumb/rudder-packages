@@ -56,7 +56,7 @@ Name: %{real_name}
 Version: %{real_version}
 Release: 1%{?dist}
 Epoch: 0
-License: AGPLv3
+License: GPLv3
 URL: http://www.rudder-project.org
 
 Group: Applications/System
@@ -129,11 +129,11 @@ cp -rf %{_sourcedir}/rudder-sources %{_builddir}
 %build
 
 export MAVEN_OPTS=-Xmx512m
-cd %{_builddir}/rudder-sources/rudder-parent-pom && %{_sourcedir}/maven/bin/mvn --quiet -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
-cd %{_builddir}/rudder-sources/rudder-commons && %{_sourcedir}/maven/bin/mvn --quiet -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
-cd %{_builddir}/rudder-sources/scala-ldap && %{_sourcedir}/maven/bin/mvn --quiet -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
-cd %{_builddir}/rudder-sources/ldap-inventory && %{_sourcedir}/maven/bin/mvn --quiet -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
-cd %{_builddir}/rudder-sources/ldap-inventory/inventory-provisioning-web && %{_sourcedir}/maven/bin/mvn --quiet -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install package
+cd %{_builddir}/rudder-sources/rudder-parent-pom && %{_sourcedir}/maven/bin/mvn --batch-mode -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
+cd %{_builddir}/rudder-sources/rudder-commons && %{_sourcedir}/maven/bin/mvn --batch-mode -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
+cd %{_builddir}/rudder-sources/scala-ldap && %{_sourcedir}/maven/bin/mvn --batch-mode -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
+cd %{_builddir}/rudder-sources/ldap-inventory && %{_sourcedir}/maven/bin/mvn --batch-mode -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install
+cd %{_builddir}/rudder-sources/ldap-inventory/inventory-provisioning-web && %{_sourcedir}/maven/bin/mvn --batch-mode -s %{_sourcedir}/%{maven_settings} -Dmaven.test.skip=true install package
 
 # Installation
 #=================================================
